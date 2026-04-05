@@ -107,12 +107,13 @@ def flatten_logprobs(logprobs):
 def extract_math_response(text, args):
     try:
         pred = re.findall(r"\{(.*?)\}", text)[-1]
-        pred = float(pred.replace("final answer:", "").strip())
+        pred = pred.replace("final answer:", "").strip()
         
-        if args.dataset == 'gsm8k':
+        if args.dataset in ['gsm8k', 'arith_long']:
+            pred = float(pred)
             text = round(pred, 1)
         
-        elif args.dataset == 'formal_logic':
+        elif args.dataset in ['formal_logic', 'pro_med']:
             if len(pred) == 0:
                 text = ""
             elif len(pred) < 3:
@@ -480,12 +481,12 @@ def extract_math_answer(full_ans_text: str) -> str:
     return None
 
 def get_instruction_suffix(args):
-    if args.dataset in ['arithmetics']:
+    if args.dataset in ['arithmetics', 'arith_long']:
         return " Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: 12.34}'. Let's think step by step."
     elif args.dataset in ['gsm8k']:
         return " Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: 123}'. Let's think step by step."
         
-    elif args.dataset in ['hellaswag','pro_medicine','formal_logic','csqa','hh_rlhf']:
+    elif args.dataset in ['hellaswag','pro_med','formal_logic','csqa','hh_rlhf']:
         return " Make sure to state your final answer choice in curly brackets at the very end of your response, just like: '{final answer: (A)}'. Let's think step by step."
     
     elif args.dataset in ['cnn_daily']:
@@ -574,6 +575,33 @@ def create_demo_text(n_shot=8, cot_flag=True):
                          ANSWER_TRIGGER + " " + answer[i] + ".\n\n"
     return demo_text
 
+### ---------------------------------- Arithmetics ------------------------------------------
+def load_data(args, split=None, easy=False):
+    
+    data_size = args.data_size
+    num_params = 4 if easy else 6
+
+    if split == 'train' :
+        x = np.random.default_rng(0).integers(0, 30, size=num_params * data_size)
+    else :
+        x = np.random.default_rng(1).integers(0, 30, size=num_params * data_size)
+
+    X, Y = [], []
+    for i in range(0, num_params * data_size, num_params):
+        if easy :
+            a, b, c, d = x[i:i+4]
+            question = f'What is the result of {a}+{b}*{c}-{d}?'
+            answer = a + b * c - d
+        else :
+            a, b, c, d, e, f = x[i:i+6]
+            if f == 0 : 
+                f = 1
+            question = f'What is the result of {a}+{b}*{c}+{d}-{e}÷{f}?'
+            answer = a + b * c + d - e / f
+        X.append(question)
+        Y.append(answer)
+    
+    return X, Y
 
 ### --------------------------------- EigenEmbed ------------------------------------------
 def compute_eigen_embed(sentence_embeddings, alpha=1e-3):

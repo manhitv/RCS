@@ -40,6 +40,7 @@ from utils import (
     minmax_normalize
     )
 
+
 #### -------------------- SCORING --------------------
 def main(args, semantic_model, semantic_tokenizer):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -60,7 +61,7 @@ def main(args, semantic_model, semantic_tokenizer):
         
         with torch.no_grad():
             # --- Label ---
-            if args.dataset in ['gsm8k', 'svamp', 'arith', 'formal_logic']:
+            if args.dataset in ['gsm8k', 'svamp', 'arith', 'formal_logic', 'arith_long']:
                 label = 1 - int(gen['eval_score'] == 1.0)
             else:
                 if args.eval_method == 'llm':
@@ -74,9 +75,16 @@ def main(args, semantic_model, semantic_tokenizer):
             extracted_answers = gen.get("extracted_answers", [])
             cleaned_texts = gen["cleaned_generated_texts"]
             samples_avg_nll = gen["samples_avg_nll"]
+            samples_nll = gen["samples_nll"]
 
             # --- Embeddings ---
-            embeddings = embed_model.encode(cleaned_texts, convert_to_tensor=True, device=device)
+            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long']:
+                rds_texts = [str(j) for j in extracted_answers]
+                gen["cleaned_generated_texts"] = rds_texts # at final answers level not full reasoning path
+            else:
+                rds_texts = cleaned_texts
+                            
+            embeddings = embed_model.encode(rds_texts, convert_to_tensor=True, device=device)
             embeddings = F.normalize(embeddings, p=2, dim=1)
             
             # --- RDS base version ---
@@ -94,16 +102,19 @@ def main(args, semantic_model, semantic_tokenizer):
             diffs_weighted = embeddings - weighted_mean_embeddings.unsqueeze(0)
             weighted_rds_scores = torch.norm(diffs_weighted, p=1, dim=1)
             weighted_rds = (probs * weighted_rds_scores).sum().item()
+            weighted_rds_l2 = (probs * torch.norm(diffs_weighted, p=2, dim=1)).sum().item()
             
             # --- EigenEmbed ---
             eigen_embed = compute_eigen_embed(embeddings, alpha=1e-3)
             
             # --- Store norms ---
+            norm_dict["ANLL"].append(float(np.mean(samples_avg_nll)))
+            norm_dict["NLL"].append(float(np.mean(samples_nll)))
             norm_dict["EigenEmbed"].append(eigen_embed)
             norm_dict["RDS Score (base)"].append(rds)
             norm_dict["RDS L2 (base)"].append(rds_l2)
             norm_dict["RDS Score (weighted)"].append(weighted_rds)
-            
+            norm_dict["RDS L2 (weighted)"].append(weighted_rds_l2)
             ### PRO
             norm_dict["PRO"].append(pro_score(gen))
             
@@ -140,7 +151,7 @@ def main(args, semantic_model, semantic_tokenizer):
                 norm_dict["P(True)"].append(p_true)       
                 
             ### Self-Consistency
-            if args.dataset in ['gsm8k', 'formal_logic']:
+            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long']:
                 freq = Counter(extracted_answers)
             else:
                 freq = Counter(cleaned_texts)

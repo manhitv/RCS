@@ -41,16 +41,16 @@ def evaluation_sample(dataset, text, answer, rouge, question=None, eval_method="
         
     if dataset in ['svamp', 'arith']: # exact match for math datasets
         eval_score = compute_label(generation=text, ground_truth=answer, eval_method="exact_match")
-    elif dataset in ['gsm8k']:
+    elif dataset in ['gsm8k', 'arith_long']: # exact match after rounding to 1 decimal place for math datasets
         eval_score = int(text == np.round(answer, 1))
         # model_answer = clean_answer(text)
         # eval_score = is_correct(model_answer=model_answer, answer=answer)
-    elif dataset in ['formal_logic']:
+    elif dataset in ['formal_logic', 'pro_med']:
         eval_score = int(text == answer)
     else:
         eval_score = compute_label(generation=text, ground_truth=answer, question=question, eval_method=eval_method, rouge=rouge, api_type=api_type)
     
-    if dataset in ['gsm8k', 'svamp', 'arith']:
+    if dataset in ['gsm8k', 'svamp', 'arith', 'arith_long', 'formal_logic', 'pro_med']:
         acc = int(eval_score == 1.0)
     else:
         if eval_method == "rougeL":
@@ -59,6 +59,106 @@ def evaluation_sample(dataset, text, answer, rouge, question=None, eval_method="
             acc = int(eval_score)
         
     return acc
+
+
+def geometric_median(points, eps=1e-5, max_iter=100):
+    """
+    points: (N, D) tensor
+    returns: (D,) tensor
+    """
+    median = points.mean(dim=0)  # init
+    
+    for _ in range(max_iter):
+        diffs = points - median
+        distances = torch.norm(diffs, p=2, dim=1).clamp(min=eps) 
+        
+        weights = 1.0 / distances
+        new_median = (points * weights.unsqueeze(1)).sum(dim=0) / weights.sum()
+        
+        if torch.norm(new_median - median) < eps:
+            break
+        median = new_median
+    
+    return median
+
+
+# def compute_medoid(points):
+#     """
+#     points: (N, D)
+#     returns: (D,)
+#     """
+#     # pairwise distance matrix (N x N)
+#     dists = torch.cdist(points, points, p=2)
+    
+#     # sum distance per point
+#     total_dist = dists.sum(dim=1)
+    
+#     # index of medoid
+#     medoid_idx = torch.argmin(total_dist)
+    
+#     return points[medoid_idx]
+
+def compute_medoid(points, weights=None):
+    """
+    points: (N, D) hoặc (D,)
+    weights: (N,) or None
+    returns: (D,)
+    """
+
+    # 🔴 Case 1: chỉ 1 vector (D,)
+    if points.dim() == 1:
+        return points
+
+    # 🔴 Case 2: chỉ 1 sample (1, D)
+    if points.size(0) == 1:
+        return points[0]
+
+    dists = torch.cdist(points, points, p=2)  # (N, N)
+
+    if weights is not None:
+        # đảm bảo shape đúng
+        weights = weights.view(1, -1)  # (1, N)
+        total_dist = (dists * weights).sum(dim=1)
+    else:
+        total_dist = dists.sum(dim=1)
+
+    medoid_idx = torch.argmin(total_dist)
+    return points[medoid_idx]
+
+
+# =========================
+# Helpers
+# =========================
+def compute_rds(embeddings, center):
+    diffs = embeddings - center.unsqueeze(0)
+    return torch.norm(diffs, p=2, dim=-1)
+
+def compute_rds_raw(answers, weights=None):
+    answers = np.array(answers)
+    mean_answer = np.average(answers, weights=weights)
+    return np.abs(answers - mean_answer)
+
+def compute_rds_raw_medoid_weighted(answers, weights=None):
+    answers = np.array(answers)
+    N = len(answers)
+    
+    if weights is None:
+        weights = np.ones(N)
+    else:
+        weights = np.array(weights)
+    
+    # pairwise absolute distances (N x N)
+    dists = np.abs(answers[:, None] - answers[None, :])
+    
+    # weighted sum of distances
+    total_dist = (dists * weights[None, :]).sum(axis=1)
+    
+    # medoid index
+    medoid_idx = np.argmin(total_dist)
+    medoid = answers[medoid_idx]
+    
+    # return distance to medoid
+    return np.abs(answers - medoid)
 
 
 def main(args):
@@ -75,7 +175,7 @@ def main(args):
     with open(gen_path, "rb") as infile:
         generations = pickle.load(infile)
 
-    accuracy = {}
+    accuracy = {"greedy": []}
     
     for i, gen in enumerate(tqdm(generations, desc="Processing generations")):
         
@@ -85,39 +185,174 @@ def main(args):
         samples_avg_nll = gen["samples_avg_nll"]
         samples_nll = gen["samples_nll"]
         
+        if args.ignore_null:
+            blank_indices = [idx for idx, ans in enumerate(extracted_answers) if ans in [None, ""]]
+            cleaned_texts = [text for idx, text in enumerate(cleaned_texts) if idx not in blank_indices]
+            extracted_answers = [ans for idx, ans in enumerate(extracted_answers) if idx not in blank_indices]
+            samples_avg_nll = [nll for idx, nll in enumerate(samples_avg_nll) if idx not in blank_indices]
+            samples_nll = [nll for idx, nll in enumerate(samples_nll) if idx not in blank_indices]
+        
         # --- RDS score ---
-        embeddings = embed_model.encode(cleaned_texts, convert_to_tensor=True, device=device)
-        mean_embedding = torch.mean(embeddings, dim=0)
-        diffs = embeddings - mean_embedding 
-        rds_scores = torch.norm(diffs, p=1, dim=1)
-        
-        probs = np.exp(-np.array(samples_avg_nll))
-        probs /= probs.sum() 
-        weighted_mean_embeddings = compute_weighted_mean(
-            embeddings, torch.tensor(probs, dtype=torch.float32, device=device)
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
+            if args.full_answers:
+                texts_for_embedding = cleaned_texts
+            else:
+                texts_for_embedding = [str(j) for j in extracted_answers]
+        else:
+            texts_for_embedding = cleaned_texts
+            
+        embeddings = embed_model.encode(texts_for_embedding, convert_to_tensor=True, device=device)
+
+
+        # =========================
+        # 1. Base (Uniform / Mean)
+        # =========================
+        rds_base_center = torch.mean(embeddings, dim=0)
+        rds_base = compute_rds(embeddings, rds_base_center)
+
+        # =========================
+        # 2. Frequency-weighted
+        # =========================
+        freq_counts = Counter(texts_for_embedding)
+        probs_freq = np.array(
+            [freq_counts[t] for t in texts_for_embedding],
+            dtype=np.float32
         )
+        probs_freq /= probs_freq.sum()
+
+        rds_freq_center = compute_weighted_mean(
+            embeddings,
+            torch.tensor(probs_freq, dtype=torch.float32, device=device)
+        )
+
+        rds_freq = compute_rds(embeddings, rds_freq_center)
+
+
+        # =========================
+        # 3. Probability-weighted
+        # =========================
+        probs_prob = np.exp(-np.array(samples_avg_nll))
+        probs_prob /= probs_prob.sum()
+
+        rds_prob_center = compute_weighted_mean(
+            embeddings,
+            torch.tensor(probs_prob, dtype=torch.float32, device=device)
+        )
+
+        rds_prob = compute_rds(embeddings, rds_prob_center)
+
+
+        # =========================
+        # 4. Medoid (L2)
+        # =========================
+        rds_medoid_center_base = compute_medoid(embeddings)
+        rds_medoid = compute_rds(embeddings, rds_medoid_center_base)
         
-        diffs_weighted = embeddings - weighted_mean_embeddings.unsqueeze(0)
-        weighted_rds_scores = torch.norm(diffs_weighted, p=1, dim=1)
+        rds_medoid_center_freq = compute_medoid(embeddings, weights=torch.tensor(probs_freq, dtype=torch.float32, device=device))
+        rds_medoid_freq = compute_rds(embeddings, rds_medoid_center_freq)
+        
+        rds_medoid_center_prob = compute_medoid(embeddings, weights=torch.tensor(probs_prob, dtype=torch.float32, device=device))
+        rds_medoid_prob = compute_rds(embeddings, rds_medoid_center_prob)
+        
+        if args.dataset in ['gsm8k', 'arith_long'] and args.raw_answers:
+            rds_raw_base = compute_rds_raw(extracted_answers)
+            rds_raw_freq = compute_rds_raw(extracted_answers, weights=probs_freq)
+            rds_raw_prob = compute_rds_raw(extracted_answers, weights=probs_prob)
+            rds_raw_medoid = compute_rds_raw_medoid_weighted(extracted_answers)
+            rds_raw_medoid_freq = compute_rds_raw_medoid_weighted(extracted_answers, weights=probs_freq)
+            rds_raw_medoid_prob = compute_rds_raw_medoid_weighted(extracted_answers, weights=probs_prob)
         
         # --- Ranking and find samples ---
-        if args.dataset in ['gsm8k', 'formal_logic']:
-        
-            nll_sample = extracted_answers[np.argmin(samples_nll)]
-            avg_nll_sample = extracted_answers[np.argmin(samples_avg_nll)]
-            rds_sample = extracted_answers[torch.argmin(rds_scores).item()]
-            weighted_rds_sample = extracted_answers[torch.argmin(weighted_rds_scores).item()]
-            
-            freq = Counter(extracted_answers)
-            majority_sample = freq.most_common(1)[0][0]
+        if len(samples_nll) == 0:
+            nll_sample = None
+            avg_nll_sample = None
+            rds_base_sample = None
+            rds_freq_sample = None
+            rds_prob_sample = None
+            rds_medoid_sample = None
+            rds_medoid_freq_sample = None
+            rds_medoid_prob_sample = None
+            majority_sample = None
         else:
-            nll_sample = cleaned_texts[np.argmin(samples_nll)]
-            avg_nll_sample = cleaned_texts[np.argmin(samples_avg_nll)]
-            rds_sample = cleaned_texts[torch.argmin(rds_scores).item()]
-            weighted_rds_sample = cleaned_texts[torch.argmin(weighted_rds_scores).item()]
+            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
 
-            freq = Counter(cleaned_texts)
-            majority_sample = freq.most_common(1)[0][0]
+                nll_sample = extracted_answers[np.argmin(samples_nll)]
+                avg_nll_sample = extracted_answers[np.argmin(samples_avg_nll)]
+                rds_base_sample = extracted_answers[torch.argmin(rds_base).item()]
+                rds_freq_sample = extracted_answers[torch.argmin(rds_freq).item()]
+                rds_prob_sample = extracted_answers[torch.argmin(rds_prob).item()]
+                rds_medoid_sample = extracted_answers[torch.argmin(rds_medoid).item()]
+                rds_medoid_freq_sample = extracted_answers[torch.argmin(rds_medoid_freq).item()]
+                rds_medoid_prob_sample = extracted_answers[torch.argmin(rds_medoid_prob).item()]
+                
+                if args.include_oracle:
+                    oracle_sample = "None"
+                    for idx, ans in enumerate(extracted_answers):
+                        acc = evaluation_sample(
+                            dataset=args.dataset,
+                            text=ans,
+                            answer=gen["answer"],
+                            question=gen["question"] if "question" in gen else None,
+                            rouge=rouge,
+                            api_type=args.api_type,
+                            eval_method=args.eval_method,
+                            threshold=args.threshold
+                        )
+                        
+                        if acc == 1:
+                            oracle_sample = ans
+                            break
+                
+                if args.dataset in ['gsm8k', 'arith_long'] and args.raw_answers:
+                    rds_raw_base_sample = extracted_answers[np.argmin(rds_raw_base)]
+                    rds_raw_freq_sample = extracted_answers[np.argmin(rds_raw_freq)]
+                    rds_raw_prob_sample = extracted_answers[np.argmin(rds_raw_prob)]
+                    rds_raw_medoid_sample = extracted_answers[np.argmin(rds_raw_medoid)]
+                    rds_raw_medoid_freq_sample = extracted_answers[np.argmin(rds_raw_medoid_freq)]
+                    rds_raw_medoid_prob_sample = extracted_answers[np.argmin(rds_raw_medoid_prob)]
+
+                freq = Counter(extracted_answers)
+                majority_sample = freq.most_common(1)[0][0]
+            
+            else:
+            
+                nll_sample = cleaned_texts[np.argmin(samples_nll)]
+                avg_nll_sample = cleaned_texts[np.argmin(samples_avg_nll)]
+                rds_base_sample = cleaned_texts[torch.argmin(rds_base).item()]
+                rds_freq_sample = cleaned_texts[torch.argmin(rds_freq).item()]
+                rds_prob_sample = cleaned_texts[torch.argmin(rds_prob).item()]
+                rds_medoid_sample = cleaned_texts[torch.argmin(rds_medoid).item()]
+                rds_medoid_freq_sample = cleaned_texts[torch.argmin(rds_medoid_freq).item()]
+                rds_medoid_prob_sample = cleaned_texts[torch.argmin(rds_medoid_prob).item()]
+                
+                if args.dataset in ['gsm8k', 'arith_long'] and args.raw_answers:
+                    rds_raw_base_sample = cleaned_texts[np.argmin(rds_raw_base)]
+                    rds_raw_freq_sample = cleaned_texts[np.argmin(rds_raw_freq)]
+                    rds_raw_prob_sample = cleaned_texts[np.argmin(rds_raw_prob)]
+                    rds_raw_medoid_sample = cleaned_texts[np.argmin(rds_raw_medoid)]
+                    rds_raw_medoid_freq_sample = cleaned_texts[np.argmin(rds_raw_medoid_freq)]
+                    rds_raw_medoid_prob_sample = cleaned_texts[np.argmin(rds_raw_medoid_prob)]
+
+                if args.include_oracle:
+                    oracle_sample = "None"
+                    for idx, ans in enumerate(cleaned_texts):
+                        acc = evaluation_sample(
+                            dataset=args.dataset,
+                            text=ans,
+                            answer=gen["answer"],
+                            question=gen["question"] if "question" in gen else None,
+                            rouge=rouge,
+                            api_type=args.api_type,
+                            eval_method=args.eval_method,
+                            threshold=args.threshold
+                        )
+                        
+                        if acc == 1:
+                            oracle_sample = ans
+                            break
+
+                freq = Counter(cleaned_texts)
+                majority_sample = freq.most_common(1)[0][0]
         
         if args.self_certainty:
             sc_cache_path = f"{config.output_dir}/{args.dataset}_{args.model}_N={args.n_samples}_F={args.fraction_of_data_to_use}_A={args.api_type}_S={args.seed}__self_certainty.pkl"
@@ -144,24 +379,38 @@ def main(args):
                 
             gen["samples_ce"] = all_self_certainty[i]
         elif args.deep_conf:
-            # TODO: Add DeepConf code here
+            # TODO: Add DeepConf code here --> ignore for now (too expensive to run)
             pass
         
         # --- Self-certainty sample ---
         if "samples_ce" in gen:
             sc_scores = np.array(gen["samples_ce"])
-            if args.dataset in ['gsm8k', 'formal_logic']:
-                self_certainty_sample = get_self_certainty_sample(sc_scores, extracted_answers)
+            sc_scores = [score for idx, score in enumerate(sc_scores) if idx not in blank_indices] if args.ignore_null else sc_scores
+            
+            if len(sc_scores) == 0:
+                self_certainty_sample = None
             else:
-                self_certainty_sample = get_self_certainty_sample(sc_scores, cleaned_texts)
+                if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
+                    self_certainty_sample = get_self_certainty_sample(sc_scores, extracted_answers)
+                else:
+                    self_certainty_sample = get_self_certainty_sample(sc_scores, cleaned_texts)
         else:
             self_certainty_sample = None
 
         # --- Evaluation ---
-        methods = ['nll', 'avg_nll', 'rds', 'weighted_rds', 'majority'] if self_certainty_sample is None else \
-                  ['nll', 'avg_nll', 'rds', 'weighted_rds', 'majority', 'self_certainty']
-        samples = [nll_sample, avg_nll_sample, rds_sample, weighted_rds_sample, majority_sample] if self_certainty_sample is None else \
-                  [nll_sample, avg_nll_sample, rds_sample, weighted_rds_sample, majority_sample, self_certainty_sample]
+        method_base = ['nll', 'avg_nll', 'rds_base', 'rds_freq', 'rds_prob', 'rds_medoid', 'rds_medoid_freq', 'rds_medoid_prob', 'majority']
+        sample_base = [nll_sample, avg_nll_sample, rds_base_sample, rds_freq_sample, rds_prob_sample, rds_medoid_sample, rds_medoid_freq_sample, rds_medoid_prob_sample, majority_sample]
+        
+        if args.dataset in ['gsm8k', 'arith_long'] and args.raw_answers:
+            method_base += ['rds_raw_base', 'rds_raw_freq', 'rds_raw_prob', 'rds_raw_medoid', 'rds_raw_medoid_freq', 'rds_raw_medoid_prob']
+            sample_base += [rds_raw_base_sample, rds_raw_freq_sample, rds_raw_prob_sample, rds_raw_medoid_sample, rds_raw_medoid_freq_sample, rds_raw_medoid_prob_sample]
+        
+        if args.include_oracle:
+            method_base += ['oracle']
+            sample_base += [oracle_sample]
+            
+        methods = method_base if self_certainty_sample is None else method_base + ['self_certainty']
+        samples = sample_base if self_certainty_sample is None else sample_base + [self_certainty_sample]
 
         for method, sample in zip(methods, samples):
             acc = evaluation_sample(
@@ -175,6 +424,7 @@ def main(args):
                 threshold=args.threshold
             )
             
+            
             if method not in accuracy:
                 accuracy[method] = []
                 
@@ -183,7 +433,20 @@ def main(args):
             # For debug
             if i < 3:
                 print(f"Sample {i} | Method: {method} | Acc: {acc} | Sample: {sample}...")
-    
+
+        # Greedy acc
+        greedy_acc = evaluation_sample(
+            dataset=args.dataset,
+            text=gen['greedy_text'],
+            answer=gen["answer"],
+            question=gen["question"] if "question" in gen else None,
+            rouge=rouge,
+            api_type=args.api_type,
+            eval_method=args.eval_method,
+            threshold=args.threshold
+        )
+        accuracy["greedy"].append(greedy_acc)
+        
     # --- Reporting ---
     results = {}
     print("\n=== Metric Performance ===")
@@ -203,6 +466,10 @@ def main(args):
         "eval_method": args.eval_method,
         "api_type": args.api_type,
         "fraction_of_data_to_use": args.fraction_of_data_to_use,
+        "ignore_null": args.ignore_null,
+        "raw_answers": args.raw_answers,
+        "full_answers": args.full_answers,
+        "include_oracle": args.include_oracle,
         "seed": args.seed,
     }
     row.update(results)
@@ -241,12 +508,16 @@ if __name__ == "__main__":
     parser.add_argument('--seed', type=int, default=10, help='Random seed for reproducibility')
     parser.add_argument('--eval_method', type=str, default='rougeL', help='Evaluation method for non-math datasets (e.g., rougeL or api)')
     parser.add_argument('--api_type', type=str, default='cohere', choices=['gemini', 'cohere'], help='API type for LLM evaluation')
+    parser.add_argument('--ignore_null', action='store_true', help='Whether to ignore samples with null generations')
+    parser.add_argument('--raw_answers', action='store_true', help='Whether to compute RDS variants on raw answers instead of embeddings (only for math datasets)')
+    parser.add_argument('--full_answers', action='store_true', help='Whether to compute RDS variants on full generated texts instead of extracted answers (only for math datasets)')
+    parser.add_argument('--include_oracle', action='store_true', help='Whether to include oracle method (only for math datasets)')
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     args.timestamp = timestamp
 
-    print(f"RANKING: Dataset={args.dataset}, Model={args.model}, N={args.n_samples}, F={args.fraction_of_data_to_use}, T={args.threshold}, S={args.seed}, E={args.eval_method}, A={args.api_type}.")
+    print(f"RANKING: Dataset={args.dataset}, Model={args.model}, N={args.n_samples}, F={args.fraction_of_data_to_use}, T={args.threshold}, S={args.seed}, E={args.eval_method}, A={args.api_type}, I={args.ignore_null}.")
     set_seed(args.seed)
     start_time = datetime.now()
     main(args)

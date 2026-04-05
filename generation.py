@@ -122,9 +122,27 @@ def parse_dataset(args):
         ds = load_dataset("gsm8k", "main")['test']
         questions = [item['question'] for item in ds]
         answers = [item['answer'] for item in ds]
+    
+    elif args.dataset == 'arith_long':
+        num_params = 6
+        data_size = 1000
+        x = np.random.default_rng(1).integers(0, 30, size=num_params * data_size)
+
+        questions, answers = [], []
+        for i in range(0, num_params * data_size, num_params):
+            a, b, c, d, e, f = x[i:i+6]
+            if f == 0 : 
+                f = 1
+            question = f'What is the result of {a}+{b}*{c}+{d}-{e}÷{f}?'
+            answer = a + b * c + d - e / f
+            questions.append(question)
+            answers.append(str(answer))
         
-    elif args.dataset == 'formal_logic':
-        ds = load_dataset('cais/mmlu', 'formal_logic')['test']
+    elif args.dataset in ['formal_logic', 'pro_med']:
+        if args.dataset == 'formal_logic':
+            ds = load_dataset('cais/mmlu', 'formal_logic')['test']
+        else:
+            ds = load_dataset('cais/mmlu', 'professional_medicine')['test']
         ds = pd.DataFrame(ds)
         
         questions = []
@@ -137,12 +155,13 @@ def parse_dataset(args):
             label = f"({choices[int(answer)]})"
             questions.append(question)
             answers.append(label)
+    
     else:
         raise ValueError(f"Dataset {args.dataset} not supported for parsing.")
 
     # Build few-shot prompt
     n_few = min(args.few_shot_num, len(questions))
-    if args.dataset in ['gsm8k', 'formal_logic']:
+    if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
         few_shot_prompt = get_instruction_suffix(args=args) # create_demo_text()
         
     elif args.dataset == 'coqa':
@@ -178,7 +197,7 @@ def parse_dataset(args):
                 "answer": answers[i],
                 "prompt": prompt
             })
-    elif args.dataset in ['gsm8k', 'formal_logic']: 
+    elif args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']: 
         for i in range(len(questions)):
             prompt = f"Question: {questions[i]}\n" + few_shot_prompt
             processed_dataset.append({
@@ -228,16 +247,18 @@ def generate_sequences(llm, dataset, rouge, args):
 
         # === GREEDY DECODING ===
         greedy_out = llm.generate(prompt, sampling_params=greedy_params, use_tqdm=False)[0].outputs[0]
-        greedy_text = greedy_out.text.strip()
-        if args.dataset in ['gsm8k', 'formal_logic']:
+        greedy_text_raw = greedy_out.text.strip()
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
             
-            greedy_text = extract_math_response(text=greedy_text, args=args)
-            if args.dataset == 'gsm8k':
+            greedy_text = extract_math_response(text=greedy_text_raw, args=args)
+            if args.dataset in ['gsm8k']:
                 answer = extract_math_answer(answer)
+            elif args.dataset in ['arith_long']:
+                answer = float(answer)
 
         else:
             
-            greedy_text = clean_generation(greedy_text)
+            greedy_text = clean_generation(greedy_text_raw)
             
         greedy_logprobs = greedy_out.logprobs
 
@@ -245,12 +266,12 @@ def generate_sequences(llm, dataset, rouge, args):
         if args.dataset in ['svamp', 'arith']: # exact match for math datasets
             eval_score = compute_label(greedy_text, answer, eval_method='exact_match')
         
-        elif args.dataset == 'gsm8k':
+        elif args.dataset in ['gsm8k', 'arith_long']: # exact match after rounding to 1 decimal place for math datasets
             # model_answer = clean_answer(greedy_text)
             # eval_score = is_correct(model_answer=model_answer, answer=answer)
             eval_score = int(greedy_text == np.round(answer, 1))
         
-        elif args.dataset in ['formal_logic']:
+        elif args.dataset in ['formal_logic', 'pro_med']: # exact match for multiple choice datasets
             eval_score = int(greedy_text == answer)
             
         else:
@@ -265,7 +286,7 @@ def generate_sequences(llm, dataset, rouge, args):
         # === CLEANING ===
         cleaned = [clean_generation(g) for g in generated_texts]
         
-        if args.dataset in ['gsm8k', 'formal_logic']:
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
             extracted_answers = [extract_math_response(text=g, args=args) for g in generated_texts]
         else:
             extracted_answers = cleaned
@@ -289,8 +310,10 @@ def generate_sequences(llm, dataset, rouge, args):
             print('Prompt:', prompt)
             print('Question:', question)
             print('Answer:', answer)
-            print('Greedy text:', greedy_text)
+            print('Greedy text:', greedy_text_raw)
+            print('Cleaned greedy text:', greedy_text)
             print('Greedy logprobs:', greedy_logprobs)
+            print('Generated texts:', generated_texts)
             print('Extracted greedy answer:', greedy_text)
             print('Extracted answers:', extracted_answers)
             print('Samples avg NLL:', samples_avg_nll)
@@ -310,6 +333,7 @@ def generate_sequences(llm, dataset, rouge, args):
             'samples_nll': samples_nll,
             'samples_avg_nll': samples_avg_nll,
             'greedy_text': greedy_text,
+            'greedy_text_raw': greedy_text_raw,
             'greedy_nll': greedy_nll,
             'greedy_avg_nll': greedy_avg_nll,
             'eval_score': eval_score,
@@ -339,11 +363,19 @@ def main(args):
     llm = LLM(model=hf_model_dir, dtype="bfloat16", gpu_memory_utilization=0.9, max_model_len=2048)
     print(f"Loaded model {args.model} for generation.")
     
+    # Check if output already exists
+    output_path = f"{config.output_dir}/{args.dataset}_{args.model}_N={args.n_samples}_F={args.fraction_of_data_to_use}_A={args.api_type}_S={args.seed}__generation.pkl"
+    # if os.path.exists(output_path):
+    #     print(f"Output already exists at {output_path}. Ignore generation results...")
+    #     with open(output_path, "rb") as f:
+    #         sequences = pickle.load(f)
+    #     return sequences
+    
     # Run generation
     sequences = generate_sequences(llm=llm, dataset=dataset, rouge=rouge, args=args)
     
     # Save
-    output_path = f"{config.output_dir}/{args.dataset}_{args.model}_N={args.n_samples}_F={args.fraction_of_data_to_use}_A={args.api_type}_S={args.seed}__generation.pkl"
+    # output_path = f"{config.output_dir}/{args.dataset}_{args.model}_N={args.n_samples}_F={args.fraction_of_data_to_use}_A={args.api_type}_S={args.seed}__generation.pkl"
     with open(output_path, "wb") as f:
         pickle.dump(sequences, f)
 
