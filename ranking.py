@@ -385,7 +385,8 @@ def main(args):
                 print(f"Saved self-certainty scores to {sc_cache_path}")
                 
             gen["samples_ce"] = all_self_certainty[i]
-        elif args.modex:
+        
+        if args.modex:
             modex_idx = modex_select(cleaned_texts, adjacency='text', tau=0.8, goodness_of_cut='conductance', emb_encoder=embed_model)
             if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
                 modex_sample = extracted_answers[modex_idx]

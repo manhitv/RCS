@@ -212,15 +212,55 @@ def simple_extract_answer(text):
 # =========================
 # 4. Normalize
 # =========================
-def normalize_answer(ans):
-    """
-    Normalize for fair comparison
-    """
-    if isinstance(ans, str):
-        return ans.strip().strip('"\'')
-    if isinstance(ans, (list, dict)):
-        return json.dumps(ans, sort_keys=True)
-    return ans
+# def normalize_answer(ans):
+#     """
+#     Normalize for fair comparison
+#     """
+#     if isinstance(ans, str):
+#         return ans.strip().strip('"\'')
+#     if isinstance(ans, (list, dict)):
+#         return json.dumps(ans, sort_keys=True)
+#     return ans
+
+def normalize_answer(x):
+    if x is None:
+        return x
+
+    # convert tensors / weird types
+    if not isinstance(x, str):
+        x = str(x)
+
+    x = x.strip()
+
+    # 1. try parse as python literal ('abc', ["a"], {'a':1}, etc.)
+    try:
+        x = ast.literal_eval(x)
+    except:
+        pass
+
+    # helper: convert all dict keys to string (recursive)
+    def convert_keys(obj):
+        if isinstance(obj, dict):
+            return {str(k): convert_keys(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_keys(v) for v in obj]
+        else:
+            return obj
+
+    # 2. if list/dict → stringify stable
+    if isinstance(x, (list, dict)):
+        try:
+            x = convert_keys(x)
+            return json.dumps(x, sort_keys=True)
+        except Exception:
+            # fallback: avoid crash
+            return json.dumps(str(x))
+
+    # 3. final cleanup for strings
+    if isinstance(x, str):
+        return x.strip().strip('"\'').strip()
+
+    return str(x)
 
 
 # =========================
@@ -258,7 +298,7 @@ def extract_math_response(text, args):
             pred = float(pred)
             text = round(pred, 1)
         
-        elif args.dataset in ['formal_logic', 'pro_med']:
+        elif args.dataset in ['formal_logic', 'pro_med', 'mmlu_pro']:
             if len(pred) == 0:
                 text = ""
             elif len(pred) < 3:
@@ -544,7 +584,7 @@ def generate_sequences(llm, dataset, rouge, args):
         elif args.dataset in ['crux_eval']:
             
             greedy_text = extract_code_response(greedy_text_raw)
-            # answer = code_eval(answer)
+            answer = normalize_answer(answer)
 
         else:
             
