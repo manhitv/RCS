@@ -41,7 +41,6 @@ MODEL_PATH_DICT = {
     "gemma2-9b": "google/gemma-2-9b-it",
     "gemma3-1b": "google/gemma-3-1b-it",
     "gemma3-4b": "google/gemma-3-4b-it",
-    "gemma3-12b": "google/gemma-3-12b-it",
     "phi3-7b": "microsoft/Phi-3-small-8k-instruct",
     "phi3-3b": "microsoft/Phi-3-mini-4k-instruct",
     "phi3.5-3b": "microsoft/Phi-3.5-mini-instruct",
@@ -106,147 +105,6 @@ def flatten_logprobs(logprobs):
     elif isinstance(logprobs, dict):
         flat.extend([v.logprob for v in logprobs.values()])
     return flat
-
-
-# -----------------------------------------------
-# CODE EXTRACTION UTILS
-# -----------------------------------------------
-import re
-import json
-import ast
-
-
-# =========================
-# 1. JSON extraction (robust)
-# =========================
-def extract_json_safe(text):
-    """
-    Extract the LAST valid JSON object that contains key 'answer'.
-    Uses JSONDecoder to avoid brace-matching bugs.
-    """
-    if not isinstance(text, str):
-        return None
-
-    # remove markdown fences
-    text = re.sub(r'```(?:json)?\s*', '', text)
-    text = re.sub(r'\s*```', '', text)
-
-    decoder = json.JSONDecoder()
-    idx = 0
-    n = len(text)
-
-    last_valid = None
-
-    while idx < n:
-        if text[idx] == "{":
-            try:
-                obj, end = decoder.raw_decode(text[idx:])
-                if isinstance(obj, dict) and "answer" in obj:
-                    last_valid = obj  # keep last match
-                idx += end
-                continue
-            except json.JSONDecodeError:
-                pass
-        idx += 1
-
-    return last_valid
-
-
-# =========================
-# 2. Literal parsing
-# =========================
-def try_parse_literal(x):
-    """
-    Convert string → Python object (list, int, float, etc.)
-    """
-    if not isinstance(x, str):
-        return x
-
-    x = x.strip()
-
-    # try JSON first
-    try:
-        return json.loads(x)
-    except:
-        pass
-
-    # fallback to python literal
-    try:
-        return ast.literal_eval(x)
-    except:
-        return x
-
-
-# =========================
-# 3. Regex fallback
-# =========================
-def simple_extract_answer(text):
-    """
-    Extract answer using regex heuristics.
-    Non-greedy + safer patterns.
-    """
-    if not isinstance(text, str):
-        return None
-
-    patterns = [
-        r"final answer\s*[:=]\s*([^\n]+)",
-        r"the answer is\s*([^\n]+)",
-        r"(?<!correct_)\banswer\s*[:=]\s*([^\n]+)",
-    ]
-
-    for p in patterns:
-        m = re.search(p, text, re.IGNORECASE)
-        if m:
-            ans = m.group(1).strip()
-            ans = re.split(r"\n|\.$", ans)[0]
-            return try_parse_literal(ans)
-
-    # fallback: last number
-    numbers = re.findall(r"-?\d+\.?\d*", text)
-    if numbers:
-        return try_parse_literal(numbers[-1])
-
-    return None
-
-
-# =========================
-# 4. Normalize
-# =========================
-def normalize_answer(ans):
-    """
-    Normalize for fair comparison
-    """
-    if isinstance(ans, str):
-        return ans.strip().strip('"\'')
-    if isinstance(ans, (list, dict)):
-        return json.dumps(ans, sort_keys=True)
-    return ans
-
-
-# =========================
-# 5. Main API
-# =========================
-def extract_code_response(prediction_str):
-    """
-    Main extraction pipeline:
-    1. JSON (preferred)
-    2. Regex fallback
-    """
-
-    # 1. Try JSON
-    pred = extract_json_safe(prediction_str)
-    if pred and "answer" in pred:
-        return normalize_answer(pred["answer"])
-
-    # 2. Fallback regex
-    ans = simple_extract_answer(prediction_str)
-    return normalize_answer(ans)
-
-
-def code_eval(a, b):
-    if type(a) != type(b):
-        return str(a) == str(b)
-    return a == b
 
 
 def extract_math_response(text, args):
@@ -434,18 +292,12 @@ def parse_dataset(args):
             questions.append(question)
             answers.append(label)
     
-    elif args.dataset in ['crux_eval']:
-        ds = load_dataset('cruxeval-org/cruxeval')['test']
-        format_code = "Code: {code}\n\nInput: {input}"
-        questions = [format_code.format(code=item['code'], input=item['input']) for item in ds]
-        answers = [item['output'] for item in ds]
-    
     else:
         raise ValueError(f"Dataset {args.dataset} not supported for parsing.")
 
     # Build few-shot prompt
     n_few = min(args.few_shot_num, len(questions))
-    if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'crux_eval', 'mmlu_pro']:
+    if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
         few_shot_prompt = get_instruction_suffix(args=args)
         
     elif args.dataset == 'coqa':
@@ -481,7 +333,7 @@ def parse_dataset(args):
                 "answer": answers[i],
                 "prompt": prompt
             })
-    elif args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'crux_eval', 'mmlu_pro']:
+    elif args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']: 
         for i in range(len(questions)):
             prompt = f"Question: {questions[i]}\n" + few_shot_prompt
             processed_dataset.append({
@@ -504,7 +356,6 @@ def parse_dataset(args):
 # --------------------
 # GENERATION + NLL
 # --------------------
-# generate_sequences_hf: Huggingface version for GPT-OSS-20B
 def generate_sequences(llm, dataset, rouge, args):
     
     print('--- GENERATION PARAMETERS ---')
@@ -533,18 +384,13 @@ def generate_sequences(llm, dataset, rouge, args):
         # === GREEDY DECODING ===
         greedy_out = llm.generate(prompt, sampling_params=greedy_params, use_tqdm=False)[0].outputs[0]
         greedy_text_raw = greedy_out.text.strip()
-        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro']:
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
             
             greedy_text = extract_math_response(text=greedy_text_raw, args=args)
             if args.dataset in ['gsm8k']:
                 answer = extract_math_answer(answer)
             elif args.dataset in ['arith_long']:
                 answer = float(answer)
-        
-        elif args.dataset in ['crux_eval']:
-            
-            greedy_text = extract_code_response(greedy_text_raw)
-            # answer = code_eval(answer)
 
         else:
             
@@ -561,11 +407,8 @@ def generate_sequences(llm, dataset, rouge, args):
             # eval_score = is_correct(model_answer=model_answer, answer=answer)
             eval_score = int(greedy_text == np.round(answer, 1))
         
-        elif args.dataset in ['formal_logic', 'pro_med', 'mmlu_pro']: # exact match for multiple choice datasets
+        elif args.dataset in ['formal_logic', 'pro_med']: # exact match for multiple choice datasets
             eval_score = int(greedy_text == answer)
-            
-        elif args.dataset in ['crux_eval']: # exact match for code generation
-            eval_score = code_eval(greedy_text, answer)
             
         else:
             eval_score = compute_label(greedy_text, answer, rouge=rouge, eval_method='rougeL')
@@ -578,14 +421,11 @@ def generate_sequences(llm, dataset, rouge, args):
 
         # === CLEANING ===
         cleaned = [clean_generation(g) for g in generated_texts]
-        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro']:
+        
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
             extracted_answers = [extract_math_response(text=g, args=args) for g in generated_texts]
-        
-        elif args.dataset in ['crux_eval']:
-            extracted_answers = [extract_code_response(g) for g in generated_texts]
-        
         else:
-            extracted_answers = [clean_generation(g) for g in generated_texts]
+            extracted_answers = cleaned
 
         # === UNCERTAINTY (negative log-likelihood) ===
         samples_avg_nll, samples_nll = [], []
@@ -745,170 +585,6 @@ def compute_metrics(embeddings, mean, weights, p=1):
     weighted = (weights_tensor * norms).sum()
     return weighted.item()
 
-
-
-### --------------------------------- Self-certainty ------------------------------------------
-def confidence_logprob_sum(logprob_sum: torch.Tensor, attention_mask: torch.Tensor, V: int):
-    """
-    Calculate the confidence of the logprob_sum.
-    logprob_sum: torch.Tensor, shape (batch_size, seq_length) or (seq_length)
-    attention_mask: torch.Tensor, shape (batch_size, seq_length) or (seq_length)
-    V: int, the vocab size
-    """
-    logprob_sum = logprob_sum.contiguous()
-    attention_mask = attention_mask.contiguous()
-    V_tensor = torch.tensor(V, dtype=logprob_sum.dtype, device=logprob_sum.device)
-    conf = -1/V * logprob_sum - torch.log(V_tensor)
-    valid_conf = conf * attention_mask
-    batch_confidence_list = (valid_conf.sum(dim=-1) / attention_mask.sum(dim=-1)).tolist()
-    return batch_confidence_list
-
-def get_self_certainty_sample(all_confidences, answers, power=0.3):
-    sorted_indices = sorted(range(len(all_confidences)), key=lambda k: all_confidences[k], reverse=True)
-    votes_per_output = [len(all_confidences) - rank for rank in range(len(all_confidences))] 
-
-    # Power function votes
-    votes_per_output = [vote**power for vote in votes_per_output]
-
-
-    votes_map = {sorted_indices[i]: votes_per_output[i] for i in range(len(sorted_indices))}
-    votes = [0 for _ in range(len(all_confidences))]
-    for i in range(len(all_confidences)):
-        answer_i = answers[i]
-        if answer_i is None:
-            continue
-        find_answer = False
-        for j in range(i):
-            answer_j = answers[j]
-            if answer_j is None:
-                continue
-            if answer_i == answer_j:
-                votes[j] += votes_map[i]
-                find_answer = True
-                break
-            
-        if not find_answer:
-            votes[i] += votes_map[i]
-            
-    all_confidences = [votes[i] for i in range(len(all_confidences))]
-
-    best_confidence = max(all_confidences)
-    best_index = all_confidences.index(best_confidence)
-    return answers[best_index]
-
-
-@torch.no_grad()
-def compute_self_certainty_scores(
-    model_dir: str,
-    prompts: list[str],
-    generated_texts_list: list[list[str]], 
-    batch_size: int = 4,
-    device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    max_length: int = 2048,
-) -> list[list[float]]:
-    # Reference from: https://github.com/backprop07/Self-Certainty/blob/main/src/confidence_list.py
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, padding_side="right")
-    model = AutoModelForCausalLM.from_pretrained(
-        model_dir,
-        torch_dtype=torch.bfloat16,
-        device_map="auto" if device == "cuda" else None
-    ).to(device)
-    
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model.eval()
-
-    all_confidences = []
-
-    for idx, (prompt, generated_texts) in enumerate(tqdm(zip(prompts, generated_texts_list), total=len(prompts))):
-        # Encode prompt
-        prompt_enc = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=max_length,
-            add_special_tokens=False,
-        ).to(device)
-        input_ids = prompt_enc.input_ids[0]
-        input_mask = prompt_enc.attention_mask[0]
-        input_len = input_mask.sum().item()
-
-        confidences = [None] * len(generated_texts)
-
-        # Group generated texts by length to avoid OOM
-        groups = {"small": [], "medium": [], "large": []}
-        indices = []
-        for i, text in enumerate(generated_texts):
-            l = len(text)
-            if l > 6144:
-                groups["large"].append(text)
-            elif l > 3072:
-                groups["medium"].append(text)
-            else:
-                groups["small"].append(text)
-            indices.append(i)
-
-        group_bs = {"small": batch_size, "medium": max(1, batch_size//2), "large": max(1, batch_size//4)}
-
-        for group_name in ["small", "medium", "large"]:
-            texts = groups[group_name]
-            if not texts:
-                continue
-
-            group_indices = [indices[i] for i in range(len(indices)) if generated_texts[indices[i]] in texts]
-            bs = group_bs[group_name]
-
-            # Tokenize outputs
-            out_enc = tokenizer(
-                texts,
-                padding=True,
-                truncation=True,
-                max_length=max_length,
-                return_tensors="pt"
-            ).to(device)
-
-            out_ids = out_enc.input_ids
-            out_mask = out_enc.attention_mask
-
-            # Repeat prompt for batch
-            full_ids = torch.cat([
-                input_ids.unsqueeze(0).repeat(len(texts), 1),
-                out_ids
-            ], dim=1).long()
-            full_mask = torch.cat([
-                input_mask.unsqueeze(0).repeat(len(texts), 1),
-                out_mask
-            ], dim=1).long()
-
-            group_confs = []
-            for i in range(0, len(texts), bs):
-                j = i + bs
-                batch_ids = full_ids[i:j]
-                batch_mask = full_mask[i:j]
-
-                logits = model(batch_ids, attention_mask=batch_mask).logits
-                with torch.autocast("cuda", dtype=torch.bfloat16):
-                    batch_logprob_sum = logits[:, input_len:, :] 
-                    batch_logprob_sum = F.log_softmax(batch_logprob_sum, dim=-1)
-                    batch_logprob_sum = batch_logprob_sum.sum(dim=-1).to(device).to(torch.float32)
-                
-                # Use the output attention mask from the tokenized group (for this batch).
-                batch_output_attention_mask = out_mask[i:j]
-                
-                vocab_size = getattr(model.config, "vocab_size", None)
-                if vocab_size is None:
-                    vocab_size = model.get_input_embeddings().weight.shape[0]
-                batch_confidence_list = confidence_logprob_sum(batch_logprob_sum, batch_output_attention_mask, vocab_size) # model.config.vocab_size
-                group_confs.extend(batch_confidence_list)
-
-            for conf, orig_idx in zip(group_confs, group_indices):
-                confidences[orig_idx] = float(conf)
-
-        all_confidences.append(confidences)
-
-    return all_confidences
-
 ### --------------------------------- GSM8K ------------------------------------------
 def clean_answer(model_pred):
     model_pred = model_pred.lower()
@@ -970,23 +646,12 @@ def get_instruction_suffix(args):
     elif args.dataset in ['gsm8k']:
         return " Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: 123}'. Let's think step by step."
         
-    elif args.dataset in ['hellaswag','pro_med','formal_logic','csqa','hh_rlhf', 'mmlu_pro']:
+    elif args.dataset in ['hellaswag','pro_med','formal_logic','csqa','hh_rlhf']:
         return " Make sure to state your final answer choice in curly brackets at the very end of your response, just like: '{final answer: (A)}'. Let's think step by step."
     
     elif args.dataset in ['cnn_daily']:
         return ' Make sure to provide your summary after stating "# Summary # ".'
-    
-    elif args.dataset in ['crux_eval']:
-        prompt = """You are given a Python function and some inputs. 
-Your task is to determine the exact output of the function when called with those inputs.
 
-Think step by step inside your mind, but **DO NOT output any reasoning, explanation, or extra text**.
-Your response MUST be **ONLY** a valid JSON object in this exact format:
-{"answer": <final_output>}
-Do not include any markdown, code blocks, or additional text outside the JSON."""
-        
-        return prompt
-    
 ### ---------------------------------- Arithmetics ------------------------------------------
 def load_data(args, split=None, easy=False):
     

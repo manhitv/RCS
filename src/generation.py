@@ -9,7 +9,7 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 
 from vllm import LLM
-from utils import (
+from RCS.src.utils import (
     MODEL_PATH_DICT,
     set_seed, 
     parse_dataset,
@@ -33,16 +33,16 @@ def main(args):
 
     # Init model
     hf_model_dir = MODEL_PATH_DICT[args.model]
-    llm = LLM(model=hf_model_dir, dtype="bfloat16", gpu_memory_utilization=0.5, max_model_len=2048) # 0.9 by default, 0.5 for GPT-OSS-20B
+    llm = LLM(model=hf_model_dir, dtype="bfloat16", gpu_memory_utilization=0.9, max_model_len=2048)
     print(f"Loaded model {args.model} for generation.")
     
     # Check if output already exists
     output_path = f"{config.output_dir}/{args.dataset}_{args.model}_N={args.n_samples}_F={args.fraction_of_data_to_use}_A={args.api_type}_S={args.seed}__generation.pkl"
-    # if os.path.exists(output_path):
-    #     print(f"Output already exists at {output_path}. Ignore generation results...")
-    #     with open(output_path, "rb") as f:
-    #         sequences = pickle.load(f)
-    #     return sequences
+    if os.path.exists(output_path):
+        print(f"Output already exists at {output_path}. Ignore generation results...")
+        with open(output_path, "rb") as f:
+            sequences = pickle.load(f)
+        return sequences
     
     # Run generation
     sequences = generate_sequences(llm=llm, dataset=dataset, rouge=rouge, args=args)

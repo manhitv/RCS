@@ -18,7 +18,7 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 
 from sentence_transformers import SentenceTransformer
-from utils import (
+from RCS.src.utils import (
     MODEL_PATH_DICT,
     set_seed,
     compute_self_certainty_scores, 
@@ -28,11 +28,8 @@ from utils import (
     clean_answer, 
     is_correct,
     compute_label,
-    extract_math_response,
-    code_eval
+    extract_math_response
     )
-
-from ranking_modex import modex_select
 
 
 def evaluation_sample(dataset, text, answer, rouge, question=None, eval_method="rougeL", api_type="cohere", threshold=0.3):
@@ -48,16 +45,12 @@ def evaluation_sample(dataset, text, answer, rouge, question=None, eval_method="
         eval_score = int(text == np.round(answer, 1))
         # model_answer = clean_answer(text)
         # eval_score = is_correct(model_answer=model_answer, answer=answer)
-    elif dataset in ['formal_logic', 'pro_med', 'mmlu_pro']:
+    elif dataset in ['formal_logic', 'pro_med']:
         eval_score = int(text == answer)
-        
-    elif dataset in ['crux_eval']:
-        eval_score = code_eval(text, answer)
-    
     else:
         eval_score = compute_label(generation=text, ground_truth=answer, question=question, eval_method=eval_method, rouge=rouge, api_type=api_type)
     
-    if dataset in ['gsm8k', 'svamp', 'arith', 'arith_long', 'formal_logic', 'pro_med', 'mmlu_pro', 'crux_eval']:
+    if dataset in ['gsm8k', 'svamp', 'arith', 'arith_long', 'formal_logic', 'pro_med']:
         acc = int(eval_score == 1.0)
     else:
         if eval_method == "rougeL":
@@ -200,7 +193,7 @@ def main(args):
             samples_nll = [nll for idx, nll in enumerate(samples_nll) if idx not in blank_indices]
         
         # --- RDS score ---
-        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
             if args.full_answers:
                 texts_for_embedding = cleaned_texts
             else:
@@ -281,7 +274,7 @@ def main(args):
             rds_medoid_prob_sample = None
             majority_sample = None
         else:
-            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
+            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
 
                 nll_sample = extracted_answers[np.argmin(samples_nll)]
                 avg_nll_sample = extracted_answers[np.argmin(samples_avg_nll)]
@@ -385,12 +378,9 @@ def main(args):
                 print(f"Saved self-certainty scores to {sc_cache_path}")
                 
             gen["samples_ce"] = all_self_certainty[i]
-        elif args.modex:
-            modex_idx = modex_select(cleaned_texts, adjacency='text', tau=0.8, goodness_of_cut='conductance', emb_encoder=embed_model)
-            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
-                modex_sample = extracted_answers[modex_idx]
-            else:
-                modex_sample = cleaned_texts[modex_idx]
+        elif args.deep_conf:
+            # TODO: Add DeepConf code here --> ignore for now (too expensive to run)
+            pass
         
         # --- Self-certainty sample ---
         if "samples_ce" in gen:
@@ -400,7 +390,7 @@ def main(args):
             if len(sc_scores) == 0:
                 self_certainty_sample = None
             else:
-                if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
+                if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
                     self_certainty_sample = get_self_certainty_sample(sc_scores, extracted_answers)
                 else:
                     self_certainty_sample = get_self_certainty_sample(sc_scores, cleaned_texts)
@@ -418,22 +408,9 @@ def main(args):
         if args.include_oracle:
             method_base += ['oracle']
             sample_base += [oracle_sample]
-        
-        # =========================
-        # NEW BASELINES
-        # =========================
-        if args.self_certainty:
-            method_base += ['self_certainty']
-            sample_base += [self_certainty_sample]
-        
-        if args.modex:
-            method_base += ['modex']
-            sample_base += [modex_sample]
-        
-        methods = method_base
-        samples = sample_base    
-        # methods = method_base if self_certainty_sample is None else method_base + ['self_certainty']
-        # samples = sample_base if self_certainty_sample is None else sample_base + [self_certainty_sample]
+            
+        methods = method_base if self_certainty_sample is None else method_base + ['self_certainty']
+        samples = sample_base if self_certainty_sample is None else sample_base + [self_certainty_sample]
 
         for method, sample in zip(methods, samples):
             acc = evaluation_sample(
@@ -525,7 +502,7 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, required=True)
     parser.add_argument('--n_samples', type=int, default=10)
     parser.add_argument('--self_certainty', action='store_true', help='Whether to compute self-certainty scores')
-    parser.add_argument('--modex', action='store_true', help='Whether to compute DeepConf scores')
+    parser.add_argument('--deep_conf', action='store_true', help='Whether to compute DeepConf scores')
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0, help='Fraction of data to use for evaluation (for quick testing)')
     parser.add_argument('--threshold', type=float, default=0.3, help='Threshold for binary classification of correctness (used for non-math datasets)')
     parser.add_argument('--seed', type=int, default=10, help='Random seed for reproducibility')
