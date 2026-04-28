@@ -1,15 +1,18 @@
 import os
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+# import sys
+# sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import pickle
 import evaluate
-import config
 import logging
 logging.basicConfig(level=logging.ERROR)
 
 from vllm import LLM
-from RCS.src.utils import (
+
+from . import config
+from .utils import (
     MODEL_PATH_DICT,
     set_seed, 
     parse_dataset,
@@ -33,7 +36,7 @@ def main(args):
 
     # Init model
     hf_model_dir = MODEL_PATH_DICT[args.model]
-    llm = LLM(model=hf_model_dir, dtype="bfloat16", gpu_memory_utilization=0.9, max_model_len=2048)
+    llm = LLM(model=hf_model_dir, dtype="bfloat16", gpu_memory_utilization=0.5, max_model_len=2048) # 0.9 by default, 0.5 for GPT-OSS-20B
     print(f"Loaded model {args.model} for generation.")
     
     # Check if output already exists

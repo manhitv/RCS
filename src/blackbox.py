@@ -1,50 +1,88 @@
+import os
 from tqdm import tqdm
 import pandas as pd
 from datasets import load_dataset
 import cohere
-import api_key
-import os
 import re
 
-def load_mmlu_pro(split='test', n_sample_per_cat=10):
+from . import api_key
+from .utils import extract_code_response
+
+def load_hle(split='test', max_samples=100):
     # split = 'validation' | 'test'
-    dataset = load_dataset("TIGER-Lab/MMLU-Pro")[split]
+    dataset = load_dataset("cais/hle")[split]
     dataset = pd.DataFrame(dataset)
     
     # Filter
-    selected_categories = dataset['category'].unique()
-    selected_question_idx = []
-    for cat in selected_categories:
-        question_idx = dataset.loc[dataset['category'] == cat, 'question_id'].tolist()
-        selected_question_idx.extend(question_idx[:n_sample_per_cat])
+    # 1. remove multimodal
+    df = dataset[dataset["image"] == '']
+
+    # 3. short answer / MCQ only
+    df = df[df["answer"].apply(lambda x: len(x) <= 5)] # 1464 samples
     
-    dataset = dataset[dataset['question_id'].isin(selected_question_idx)]
+    print(f"Loaded HLE dataset with {len(df)} samples after filtering.")
 
     # Prepare questions and labels
     questions, labels = [], []
-    choices = "ABCDEFGHIJ"
-    
-    template = '{}\n(A) {}\n(B) {}\n(C) {}\n(D) {}\n(E) {}\n(F) {}\n(G) {}\n(H) {}\n(I) {}\n(J) {}\n\n'
-    for query, options, answer in zip(dataset['question'], dataset['options'], dataset['answer_index']):
-        if len(options) != 10 :
-            continue
-        question = template.format(query, options[0], options[1], options[2], options[3], options[4], options[5], 
-                                   options[6], options[7], options[8], options[9])
-        label = f"({choices[int(answer)]})"
+    for question, answer in zip(df['question'], df['answer']) :
+        questions.append(question)
+        labels.append(answer)
+
+    return questions[:max_samples], labels[:max_samples]
+
+def load_gpqa(split='validation'):
+    dataset = load_dataset("Idavidrein/gpqa", "gpqa_diamond")['train']
+    dataset = pd.DataFrame(dataset)
+    questions, labels = [], []
+    template = '{}\n(A) {}\n(B) {}\n(C) {}\n(D) {}\n\n'
+    for ctx, A, B, C, D in zip(dataset['Question'], dataset['Correct Answer'], dataset['Incorrect Answer 1'], dataset['Incorrect Answer 2'], dataset['Incorrect Answer 3']):
+        
+        question = template.format(ctx, A, B, C, D)
+        label = f"(A)"
         questions.append(question)
         labels.append(label)
+    
+    return questions, labels
+
+
+def load_cruxeval(max_samples=100):
+    ds = load_dataset('cruxeval-org/cruxeval')['test']
+    format_code = "Code: {code}\n\nInput: {input}"
+    questions = [format_code.format(code=item['code'], input=item['input']) for item in ds]
+    answers = [item['output'] for item in ds]
+    
+    return questions[:max_samples], answers[:max_samples]
+
+
+def load_bigbenchhard_nav(split='validation'):
+    dataset = load_dataset("maveriq/bigbenchhard", "navigate")['train']
+    dataset = pd.DataFrame(dataset)
+    questions, labels = [], []
+    for q, a in zip(dataset['input'], dataset['target']):
+        questions.append(q)
+        labels.append(a)
+
+    return questions, labels
+
+def load_bigbenchhard_date(split='validation'):
+    dataset = load_dataset("maveriq/bigbenchhard", "date_understanding")['train']
+    dataset = pd.DataFrame(dataset)
+    questions, labels = [], []
+    for q, a in zip(dataset['input'], dataset['target']):
+        questions.append(q)
+        labels.append(a)
 
     return questions, labels
 
 
-def extract_math_response(text, data_type='math'):
+def extract_answer_response(text, data_type='math'):
     try:
         pred = re.findall(r"\{(.*?)\}", text)[-1]
         pred = pred.replace("final answer:", "").strip()
         
         if data_type == 'math':
             text = int(pred)
-        elif data_type == 'mc':
+        elif data_type in ['mc', 'bbh_date']:
             
             if len(pred) == 0:
                 text = ""
@@ -54,6 +92,8 @@ def extract_math_response(text, data_type='math'):
             else:
                 pred = pred[1]
                 text = f"({pred})"
+        elif data_type in ['hle', 'bbh_nav']:
+            text = pred
             
         else:
             raise ValueError("Unknown data type")
@@ -73,7 +113,18 @@ def main(args):
 
     SUFFIX_MATH = " Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: 12.34}'. Let's think step by step."
     SUFFIX_MC = " Make sure to state your final answer choice in curly brackets at the very end of your response, just like: '{final answer: (A)}'. Let's think step by step."
+    SUFFIX_HLE = " Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: Z+Z+Z+Z+Z}'. Let's think step by step."
+    # SUFFIX_GPQA = " Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: Z+Z+Z+Z+Z}'. Let's think step by step."
+    SUFFIX_BBH_DATE = "Do not include any reasoning steps. Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: (A)}'."
+    SUFFIX_BBH_NAV = "Do not include any reasoning steps. Make sure to state your final answer in curly brackets at the very end of your response, just like: '{final answer: Yes}'."
+    SUFFIX_CODE = """You are given a Python function and some inputs. 
+Your task is to determine the exact output of the function when called with those inputs.
 
+Think step by step inside your mind, but **DO NOT output any reasoning, explanation, or extra text**.
+Your response MUST be **ONLY** a valid JSON object in this exact format:
+{"answer": <final_output>}
+Do not include any markdown, code blocks, or additional text outside the JSON."""
+    
     if args.dataset == 'aime25':
         ds = load_dataset("MathArena/aime_2025")['train']
         SUFFIX = SUFFIX_MATH
@@ -82,6 +133,28 @@ def main(args):
         questions, labels = load_mmlu_pro(split='test')
         SUFFIX = SUFFIX_MC
         data_type = 'mc'
+    elif args.dataset == 'hle':
+        questions, labels = load_hle(split='test')
+        SUFFIX = SUFFIX_HLE
+        data_type = 'hle'
+    elif args.dataset == 'gpqa':
+        questions, labels = load_gpqa(split='train')
+        SUFFIX = SUFFIX_MC
+        data_type = 'mc'
+    elif args.dataset == 'bbh_nav':
+        questions, labels = load_bigbenchhard_nav(split='train')
+        SUFFIX = SUFFIX_BBH_NAV
+        data_type = 'bbh_nav'
+    elif args.dataset == 'bbh_date':
+        questions, labels = load_bigbenchhard_date(split='train')
+        SUFFIX = SUFFIX_BBH_DATE
+        data_type = 'bbh_date'
+
+    elif args.dataset == 'cruxeval':
+        questions, labels = load_cruxeval()
+        SUFFIX = SUFFIX_CODE
+        data_type = 'code'
+
     else:
         raise ValueError("Unsupported dataset")
 
@@ -107,7 +180,10 @@ def main(args):
     for idx, answers in results.items():
         row = {"idx": idx}
         for i, ans in enumerate(answers):
-            pred = extract_math_response(ans, data_type=data_type)
+            if data_type == 'code':
+                pred = extract_code_response(ans)
+            else:
+                pred = extract_answer_response(ans, data_type=data_type)
             
             row[f"gen_{i}"] = ans
             row[f"pred_{i}"] = pred
@@ -116,7 +192,7 @@ def main(args):
     df = pd.DataFrame(rows)
 
     # save
-    folder_path = f"/home/s224852302/RDS/results/"
+    folder_path = f"/home/s224852302/RCS/results/"
     os.makedirs(folder_path, exist_ok=True)
     df.to_csv(f"{folder_path}{args.client}_{args.dataset}_{args.n_samples}_{args.temperature}_{args.top_p}_{args.max_tokens}.csv", index=False)
     

@@ -1,6 +1,6 @@
 # RCS
 
-Source code for the paper: **"Beyond Majority Voting: Efficient Best-Of-N with Radial Consensus Score"** 
+Source code for the paper: **"Efficient Best-Of-N with Radial Consensus Score"** 
 
 - Preprint: Comming Soon
 
@@ -19,7 +19,7 @@ conda activate <env_name>
 ## 2. Generation
 
 ```bash
-python generation.py \
+python -m src.generation \
     --model $model \
     --dataset $dataset \
     --n_samples $n \
@@ -32,11 +32,12 @@ python generation.py \
 ## 3. Best-Of-N
 
 ```bash
-python ranking.py \
+python -m src.ranking \
     --model $model \
     --dataset $dataset \
     --n_samples $n \
     --self_certainty \
+    --modex \
     --fraction_of_data_to_use $fraction \
     --threshold $threshold \
     --include_oracle \
@@ -46,18 +47,29 @@ python ranking.py \
 ## 4. Analysis
 
 ```bash
+# Blackbox setting
+python -m src.blackbox --client cohere --dataset bbh_date
+
+# Embed models: all-roberta-large-v1 | all-mpnet-base-v2
+python -m src.ranking --embed_model all-roberta-large-v1
+
 # Clean-answer setting
-python ranking.py --ignore_null
+python -m src.ranking --ignore_null
 
 # Full reasoning path
-python ranking.py --full_answers
+python -m src.ranking --full_answers
 ```
 
 ## Parameters: 
 * `--model`: Model identifier (e.g., `qwen2.5-7b`, `llama3.1-8b`)
-* `--dataset`: Dataset name
+* `--dataset`: Dataset name (e.g., `gpqa`, `formal_logic`)
 * `--n_samples`: Number of generations per input
-* `--self_certainty`: Optionally include Self-certainty baseline
+* `--self_certainty`, `--modex`: Optionally include Self-certainty/ModeX baselines
 * `--fraction_of_data_to_use`: Fraction of the dataset to use (1 = full dataset)
-* `--threshold`: correctness threshold for short-form QA (SciQ, NQ). Default=0.3
+* `--threshold`: correctness threshold for short-form QA (SciQ, NQ). Default=0.3.
 * `--include_oracle`: Optionally include Oracle baseline
+
+## Example
+```bash
+bash run.sh
+```

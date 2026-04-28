@@ -1,14 +1,11 @@
-
+import os
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 import evaluate
-import os
 import pickle
 from tqdm import tqdm
 import torch
-import config
-import json
 import argparse
 import numpy as np
 from collections import Counter
@@ -18,19 +15,18 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 
 from sentence_transformers import SentenceTransformer
-from RCS.src.utils import (
+
+from . import config
+from .utils import (
     MODEL_PATH_DICT,
     set_seed,
     compute_self_certainty_scores, 
     get_self_certainty_sample, 
     compute_weighted_mean, 
-    clean_generation, 
-    clean_answer, 
-    is_correct,
     compute_label,
-    extract_math_response
+    code_eval,
+    modex_select
     )
-
 
 def evaluation_sample(dataset, text, answer, rouge, question=None, eval_method="rougeL", api_type="cohere", threshold=0.3):
     
@@ -45,12 +41,16 @@ def evaluation_sample(dataset, text, answer, rouge, question=None, eval_method="
         eval_score = int(text == np.round(answer, 1))
         # model_answer = clean_answer(text)
         # eval_score = is_correct(model_answer=model_answer, answer=answer)
-    elif dataset in ['formal_logic', 'pro_med']:
+    elif dataset in ['formal_logic', 'pro_med', 'mmlu_pro']:
         eval_score = int(text == answer)
+        
+    elif dataset in ['crux_eval']:
+        eval_score = code_eval(text, answer)
+    
     else:
         eval_score = compute_label(generation=text, ground_truth=answer, question=question, eval_method=eval_method, rouge=rouge, api_type=api_type)
     
-    if dataset in ['gsm8k', 'svamp', 'arith', 'arith_long', 'formal_logic', 'pro_med']:
+    if dataset in ['gsm8k', 'svamp', 'arith', 'arith_long', 'formal_logic', 'pro_med', 'mmlu_pro', 'crux_eval']:
         acc = int(eval_score == 1.0)
     else:
         if eval_method == "rougeL":
@@ -82,22 +82,6 @@ def geometric_median(points, eps=1e-5, max_iter=100):
     return median
 
 
-# def compute_medoid(points):
-#     """
-#     points: (N, D)
-#     returns: (D,)
-#     """
-#     # pairwise distance matrix (N x N)
-#     dists = torch.cdist(points, points, p=2)
-    
-#     # sum distance per point
-#     total_dist = dists.sum(dim=1)
-    
-#     # index of medoid
-#     medoid_idx = torch.argmin(total_dist)
-    
-#     return points[medoid_idx]
-
 def compute_medoid(points, weights=None):
     """
     points: (N, D) hoặc (D,)
@@ -105,18 +89,15 @@ def compute_medoid(points, weights=None):
     returns: (D,)
     """
 
-    # 🔴 Case 1: chỉ 1 vector (D,)
     if points.dim() == 1:
         return points
 
-    # 🔴 Case 2: chỉ 1 sample (1, D)
     if points.size(0) == 1:
         return points[0]
 
     dists = torch.cdist(points, points, p=2)  # (N, N)
 
     if weights is not None:
-        # đảm bảo shape đúng
         weights = weights.view(1, -1)  # (1, N)
         total_dist = (dists * weights).sum(dim=1)
     else:
@@ -193,7 +174,7 @@ def main(args):
             samples_nll = [nll for idx, nll in enumerate(samples_nll) if idx not in blank_indices]
         
         # --- RDS score ---
-        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
+        if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
             if args.full_answers:
                 texts_for_embedding = cleaned_texts
             else:
@@ -274,7 +255,7 @@ def main(args):
             rds_medoid_prob_sample = None
             majority_sample = None
         else:
-            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
+            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
 
                 nll_sample = extracted_answers[np.argmin(samples_nll)]
                 avg_nll_sample = extracted_answers[np.argmin(samples_avg_nll)]
@@ -378,9 +359,13 @@ def main(args):
                 print(f"Saved self-certainty scores to {sc_cache_path}")
                 
             gen["samples_ce"] = all_self_certainty[i]
-        elif args.deep_conf:
-            # TODO: Add DeepConf code here --> ignore for now (too expensive to run)
-            pass
+        
+        if args.modex:
+            modex_idx = modex_select(cleaned_texts, adjacency='text', tau=0.8, goodness_of_cut='conductance', emb_encoder=embed_model)
+            if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
+                modex_sample = extracted_answers[modex_idx]
+            else:
+                modex_sample = cleaned_texts[modex_idx]
         
         # --- Self-certainty sample ---
         if "samples_ce" in gen:
@@ -390,7 +375,7 @@ def main(args):
             if len(sc_scores) == 0:
                 self_certainty_sample = None
             else:
-                if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med']:
+                if args.dataset in ['gsm8k', 'formal_logic', 'arith_long', 'pro_med', 'mmlu_pro', 'crux_eval']:
                     self_certainty_sample = get_self_certainty_sample(sc_scores, extracted_answers)
                 else:
                     self_certainty_sample = get_self_certainty_sample(sc_scores, cleaned_texts)
@@ -408,9 +393,20 @@ def main(args):
         if args.include_oracle:
             method_base += ['oracle']
             sample_base += [oracle_sample]
-            
-        methods = method_base if self_certainty_sample is None else method_base + ['self_certainty']
-        samples = sample_base if self_certainty_sample is None else sample_base + [self_certainty_sample]
+        
+        # =========================
+        # NEW BASELINES
+        # =========================
+        if args.self_certainty:
+            method_base += ['self_certainty']
+            sample_base += [self_certainty_sample]
+        
+        if args.modex:
+            method_base += ['modex']
+            sample_base += [modex_sample]
+        
+        methods = method_base
+        samples = sample_base    
 
         for method, sample in zip(methods, samples):
             acc = evaluation_sample(
@@ -476,7 +472,11 @@ def main(args):
     new_row_df = pd.DataFrame([row])
 
     # --- Check if file exists ---
-    tsv_file = f'results/ranking_logs.tsv'
+    result_dir = 'results'
+    os.mkdir(result_dir, exist_ok=True)
+    
+    tsv_file = f'{result_dir}/ranking_logs.tsv'
+    
     if os.path.exists(tsv_file):
         df = pd.read_csv(tsv_file, sep='\t')
         
@@ -502,10 +502,10 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, required=True)
     parser.add_argument('--n_samples', type=int, default=10)
     parser.add_argument('--self_certainty', action='store_true', help='Whether to compute self-certainty scores')
-    parser.add_argument('--deep_conf', action='store_true', help='Whether to compute DeepConf scores')
+    parser.add_argument('--modex', action='store_true', help='Whether to compute DeepConf scores')
     parser.add_argument('--fraction_of_data_to_use', type=float, default=1.0, help='Fraction of data to use for evaluation (for quick testing)')
     parser.add_argument('--threshold', type=float, default=0.3, help='Threshold for binary classification of correctness (used for non-math datasets)')
-    parser.add_argument('--seed', type=int, default=10, help='Random seed for reproducibility')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     parser.add_argument('--eval_method', type=str, default='rougeL', help='Evaluation method for non-math datasets (e.g., rougeL or api)')
     parser.add_argument('--api_type', type=str, default='cohere', choices=['gemini', 'cohere'], help='API type for LLM evaluation')
     parser.add_argument('--ignore_null', action='store_true', help='Whether to ignore samples with null generations')
