@@ -1,0 +1,15 @@
+\begin{abstract}
+
+Solving complex problems with large language models (LLMs) often requires selecting the best answer from multiple candidate responses (best-of-$N$), yet identifying the most reliable one remains challenging, particularly when correctness does not align with majority agreement.
+Existing approaches based on voting or probability scoring rely on surface-level signals (e.g., frequency or token-level likelihood), often missing high-quality rare answers and ignoring the geometric structure of candidate representations, where correctness may emerge as semantic consistency rather than surface agreement.
+To address these limitations, we introduce \textbf{Radial Consensus Score (RCS)}, a simple, efficient, and training-free method for best-of-$N$ selection. 
+RCS models semantic consensus by computing a weighted Fréchet mean of answer embeddings and ranking candidates by their radial distance to this center, with the weighting scheme---uniform, frequency, probability, or cosine-similarity---controlling how the center is formed.
+% RCS further supports flexible weighting schemes to integrate agreement signals and model confidence, with the center adapting accordingly---for example, uniform averaging treats all candidates equally, while frequency or probability weighting shifts it toward more consistent or higher-confidence responses.
+% RCS further provides a flexible framework that supports multiple weighting schemes, enabling the integration of agreement signals and model confidence. 
+% The position of this center adapts to different consensus signals through the choice of weighting scheme: uniform averaging treats all candidates equally, while frequency or probability weighting shifts the center toward more consistent or higher-confidence responses.
+% RCS provides a general framework that supports multiple weighting schemes, enabling flexible integration of agreement signals and model confidence while remaining fully applicable in black-box settings.
+% In practice, the consensus center can be instantiated via standard embedding space averaging or other weighted aggregation methods, depending on the available signals.
+Extensive experiments across various benchmarks covering short-form QA and long-form reasoning tasks, and five open-weight models, demonstrate that RCS variants consistently outperform strong baselines by 2--7\% in selection accuracy, with advantages growing as $N$ increases.
+RCS also serves as an effective drop-in replacement for majority voting in multi-agent debate and exhibits strong robustness in black-box scenarios.
+These results highlight geometric consensus as a scalable principle for reliable answer selection beyond majority voting.
+\end{abstract}

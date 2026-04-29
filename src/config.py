@@ -1,4 +1,4 @@
-hf_cache_dir = 'YOUR_CACHE_DIR'
-data_dir = 'YOUR_DATA_DIR'
-output_dir = 'YOUR_OUTPUT_DIR'
-result_dir = 'YOUR_RESULT_DIR' # 
+hf_cache_dir = '/scratch/s224852302/VAR/hf_cache'
+data_dir = '/scratch/s224852302/VAR/datasets'
+output_dir = '/scratch/s224852302/VAR/output'
+result_dir = '/home/s224852302/RDS/results' # 
