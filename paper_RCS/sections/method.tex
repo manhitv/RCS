@@ -130,6 +130,7 @@ When \(k < N/2\), the center \(\mathbf{c}(P)\) is biased toward Cluster B and th
     See Appendix~\ref{app:proof_prop2}.
 \end{proof}
 
-Overall, the choice of $P$ controls how consensus is formed: uniform weighting reflects pure geometric agreement, frequency/probability weighting emphasizes stable or high-confidence responses, and cosine-similarity weighting uses mutual embedding agreement---all naturally suppressing inconsistent outputs. RCS$_\text{uni}$, RCS$_\text{freq}$, and RCS$_\text{cosine}$ operate purely on model outputs and embeddings, making them applicable in black-box settings.
+Overall, the choice of $P$ controls how consensus is formed: uniform weighting reflects pure geometric agreement, frequency/probability weighting emphasizes stable or high-confidence responses, and cosine-similarity weighting uses mutual embedding agreement---all naturally suppressing inconsistent outputs. 
+RCS$_\text{uni}$, RCS$_\text{freq}$, and RCS$_\text{cosine}$ operate purely on model outputs and embeddings, making them applicable in black-box settings.
 While RCS is defined over candidate-level embeddings, one may alternatively consider aggregating representations over full generation trajectories. However, as shown in Section~\ref{sec:embedding-collapse}, such approaches suffer from representation collapse and lead to degraded performance, highlighting the importance of focusing on final-answer semantics. 
 We provide the detailed pseudo-code for our method in Appendix Algorithm~\ref{alg:rds}.

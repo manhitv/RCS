@@ -101,9 +101,9 @@
 % ===
 \subsection{Experiment Setup}\label{sec:experiment-setup}
 
-\paragraph{Datasets.} We use seven established benchmarks covering both short-form question-answering and long-form reasoning tasks with different answer formats: (1) Short-form QA: \textbf{SciQ}~\citep{welbl2017crowdsourcing} and GPQA Diamond (\textbf{GPQA}~\citep{rein2024gpqa}), (2) Long-form Math Reasoning: \textbf{Arithmetics}~\citep{choi2025debate}, \textbf{GSM8K} \citep{cobbe2021training}, and (3) Long-form QA multiple choice: MMLU Formal Logic (\textbf{Form.Log.}~\citep{hendrycks2020aligning}), \textbf{MMLU-Pro}~\citep{wang2024mmlu}, BigBenchHard (\textbf{BBH-Date}, \textbf{BBH-Navigate}~\citep{suzgun2023challenging}).
+\paragraph{Models And Datasets.} We evaluate on five popular open-weight models from distinct families: Qwen2.5-3B, 7B~\citep{yang2025qwen25}, Llama3.2-3B, Llama3.1-8B~\citep{grattafiori2024llama}, and Gemma2-9B~\citep{team2024gemma}. We use seven established benchmarks covering both short-form question-answering and long-form reasoning tasks with different answer formats: (1) Short-form QA: \textbf{SciQ}~\citep{welbl2017crowdsourcing} and GPQA Diamond (\textbf{GPQA}~\citep{rein2024gpqa}), (2) Long-form Math Reasoning: \textbf{Arithmetics}~\citep{choi2025debate}, \textbf{GSM8K} \citep{cobbe2021training}, and (3) Long-form QA multiple choice: MMLU Formal Logic (\textbf{Form.Log.}~\citep{hendrycks2020aligning}), \textbf{MMLU-Pro}~\citep{wang2024mmlu}, BigBenchHard (\textbf{BBH-Date}, \textbf{BBH-Navigate}~\citep{suzgun2023challenging}).
 
-\paragraph{Models.} We evaluate on five popular open-weight models from distinct families: Qwen2.5-3B, 7B~\citep{yang2025qwen25}, Llama3.2-3B, Llama3.1-8B~\citep{grattafiori2024llama}, and Gemma2-9B~\citep{team2024gemma}. 
+% \paragraph{Models.}  
 % We refer to them as Falcon3, Gemma2, Llama3.1, and Llama3.2.
 % Qwen2.5-1.5B, 3B, 7B
 % Falcon3-7B~\citep{almazrouei2023falcon}
@@ -137,8 +137,11 @@ We report four RCS variants (Table~\ref{tab:rds_variants}): RCS$_\text{uni}$, RC
 
 \paragraph{RCS Consistently Outperforms Baselines.}
 
-We report selection accuracy in Table~\ref{tab:ranking}. RCS variants consistently achieve the best performance across all settings. RCS$_\text{uni}$ and RCS$_\text{prob}$ rank first overall, outperforming the best baseline (CE) by 2--6\%. RCS$_\text{cosine}$ consistently ranks second among RCS variants (avg.\ 56.9--59.1), outperforming SCW (avg.\ 56.0--57.0) despite using the same pairwise cosine signals---demonstrating that the RCS Fréchet-mean framework extracts more value from the same information by bypassing the discrete grouping step. RCS$_\text{freq}$ outperforms SC by avoiding hard tie-breaking through soft semantic weighting.
-Among baselines, CE is the strongest competitor. ModeX and SCW both underperform due to full-trajectory embedding collapse and, in SCW's case, the additional discrete-voting step that misses minority correct answers (Section~\ref{sec:embedding-collapse}).
+We report selection accuracy in Table~\ref{tab:ranking}. RCS variants consistently achieve the best performance across all settings. RCS$_\text{uni}$ and RCS$_\text{prob}$ rank first overall, outperforming the best baseline (SCW) by 1--3\%. 
+RCS$_\text{cosine}$ consistently ranks second among RCS variants, outperforming SCW despite using the same pairwise cosine signals---demonstrating that the RCS Fréchet-mean framework extracts more value from the same information by bypassing the discrete grouping step. 
+RCS$_\text{freq}$ outperforms SC by avoiding hard tie-breaking through soft semantic weighting.
+% Among baselines, SCW is the strongest competitor. 
+ModeX and SCW both underperform due to full-trajectory embedding collapse and, in SCW's case, the additional discrete-voting step that misses minority correct answers (Section~\ref{sec:embedding-collapse}).
 Overall, results confirm that a unified geometric framework with flexible weighting distributions is both more expressive and more robust than fixed surface-form or trajectory-level aggregation.
 
 % ==================SCALABILITY============================

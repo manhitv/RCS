@@ -2,19 +2,15 @@
 
 \paragraph{Best-Of-$N$ Metrics.}
 Self-consistency, in its most common form, performs majority voting over $N$ sampled candidates~\citep{wang2022self}. 
-Extensions such as universal and fine-grained self-consistency improve robustness but often incur extra LLM calls for evaluation or refinement~\citep{chen2023universal,wang2024integrate}. Alternatively, self-certainty directly leverages the model's output probability distribution to estimate response quality without external reward models, showing strong scaling with $N$~\citep{kang2025scalable}.
-Beyond voting-based strategies, recent advances include ranked and reasoning-aware aggregation, e.g. Borda-style voting~\citep{wang2025ranked, wan2025reasoning}. From a theoretical perspective, Best-of-$N$ has been analyzed under sampling and alignment objectives, linking it to mode estimation and KL-constrained optimization~\citep{gui2024bonbon, cordero2025certified}.
-In parallel, geometric selection methods choose candidates closest to a central representation in embedding space, with recent work leveraging embedding dispersion for uncertainty estimation~\citep{nguyen2025distance}. Methods such as ModeX~\citep{choi2026modex} instead apply spectral clustering over full reasoning traces, but are sensitive to noisy trajectories and incur higher computational cost.
-% In parallel, geometric selection methods, which choose candidates closest to a central representation in embedding space, remain less explored than probabilistic or voting-based approaches, despite recent work leveraging embedding dispersion for uncertainty estimation~\citep{nguyen2025distance}. 
-% More recently, methods such as ModeX~\citep{choi2026modex} applies spectral clustering at the full reasoning level, but is sensitive to noisy reasoning paths and incurs higher computational cost. 
-In contrast, our metrics operate directly at the concise answer level, yielding a lightweight and efficient framework that naturally incorporates both semantic agreement and optional confidence signals.
-
-Several concurrent works employ embedding-space geometry for answer selection.
-\textit{Semantic Consensus Weighting (SCW)}~\citep{jain2023sc} embeds full reasoning trajectories, computes pairwise cosine similarities, and aggregates scores by unique reasoning path before selecting the highest-scoring group---it therefore shares the full-trajectory embedding collapse of ModeX and still relies on a discrete grouping step that inherits the minority-answer blindness of majority voting; we directly compare against SCW as a baseline (Section~\ref{sec:experiment}).
-\textit{Centroid-based MBR}~\citep{deguchi2024centroid} selects the hypothesis nearest to the unweighted centroid to minimize expected error, but does not support confidence-weighted aggregation.
-\textit{Latent Self-Consistency}~\citep{chen2024latent} and ModeX~\citep{choi2026modex} cluster full reasoning trajectories in latent space, incurring sensitivity to representation collapse and higher computational cost.
-% \textit{Semantic Density}~\citep{mundler2024semantic} measures embedding-space density as a set-level uncertainty signal rather than a per-candidate selection score.
-RCS unifies these directions in a single closed-form weighted Fréchet mean that operates at the final-answer level: cosine-similarity weights are used \emph{continuously} to bias the semantic center, bypassing any discrete grouping step and enabling recovery of minority correct answers. Formal guarantees of superiority over majority voting (Propositions~1 and~2) are absent in all cited works.
+Extensions such as universal and fine-grained self-consistency improve robustness but often incur extra LLM calls for evaluation or refinement~\citep{chen2023universal,wang2024integrate}. 
+Alternatively, self-certainty directly leverages the model's output probability distribution to estimate response quality without external reward models, showing strong scaling with $N$~\citep{kang2025scalable}.
+Beyond voting-based strategies, recent advances include ranked and reasoning-aware aggregation, e.g. Borda-style voting~\citep{wang2025ranked, wan2025reasoning}. 
+From a theoretical perspective, Best-of-$N$ has been analyzed under sampling and alignment objectives, linking it to mode estimation and KL-constrained optimization~\citep{gui2024bonbon, cordero2025certified}.
+Several concurrent works employ embedding-space geometry for answer selection, from dispersion-based uncertainty estimation~\citep{nguyen2025distance} to trajectory-level clustering.
+\textit{Centroid-based MBR}~\citep{deguchi2024centroid} selects the hypothesis nearest to the unweighted centroid to minimize expected error, incurring higher computational costs.
+A further group of methods embeds full reasoning trajectories, sharing a representation-collapse problem: \textit{Latent Self-Consistency}~\citep{chen2024latent} and \textit{ModeX}~\citep{choi2026modex} apply latent-space clustering at higher computational cost; 
+\textit{Semantic Consensus Weighting}~\citep{jain2023sc} computes pairwise cosine similarities and selects the highest-scoring trajectory group via a discrete aggregation step, additionally inheriting the minority-answer blindness of majority voting.
+RCS unifies these directions in a single closed-form weighted Fr\'echet mean at the \emph{final-answer} level, avoiding embedding-collapse or discrete grouping step while remaining efficient.
 
 \paragraph{Uncertainty Estimation For LLMs.}
 Uncertainty estimation for LLMs is typically categorized into probability-based and semantic families.
