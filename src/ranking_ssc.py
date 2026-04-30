@@ -188,8 +188,9 @@ def main(args):
         # =========================
         # Cosine-similarity-weighted (SCW baseline + RCS_cosine)
         # =========================
-        norms = torch.norm(embeddings, p=2, dim=1, keepdim=True).clamp(min=1e-8)
-        normed_embeddings = embeddings / norms
+        full_text_embeddings = embed_model.encode(cleaned_texts, convert_to_tensor=True, device=device)
+        norms = torch.norm(full_text_embeddings, p=2, dim=1, keepdim=True).clamp(min=1e-8)
+        normed_embeddings = full_text_embeddings / norms
         cosine_sim_matrix = torch.mm(normed_embeddings, normed_embeddings.t())  # (N, N)
         sim_sum = cosine_sim_matrix.sum(dim=1)  # (N,): total cosine similarity of each sample to all others
 

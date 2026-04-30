@@ -327,9 +327,11 @@ To reduce computational overhead, experiments are conducted using two representa
 \textbf{Method} & \textbf{GPQA} & \textbf{MMLU-Pro} & \textbf{BBH-Date} & \textbf{BBH-Navigate} & {\textbf{Avg.}}\\
 \midrule
 SC  & 13.1 & 47.6 & 76.8 & 39.2 & 44.2\\
+SCW & 13.6 & 47.6 & 77.2 & 39.7 & 44.5\\
 \rowcolor{green!15}RCS$_\text{medoid}$ & \textbf{14.6} & \textbf{48.6} & 76.4 & 39.2 & 44.7\\
 \rowcolor{green!15}RCS$_\text{base}$   & 14.1 & \textbf{48.6} & \textbf{78.0} & 40.2 & \textbf{45.2}\\
 \rowcolor{green!15}RCS$_\text{freq}$   & 13.6 & 47.6 & 77.6 & \textbf{41.2} & 45.0\\
+\rowcolor{green!15}RCS$_\text{cosine}$   & 13.6 & 47.6 & 77.2 & 40.5 & 44.7\\
 \bottomrule
 \end{tabular}}
 \end{minipage}
@@ -483,7 +485,7 @@ RCS selects \textcolor{green}{(B)} (\textcolor{green}{\ding{51}}), as the outlie
 %------------
 \begin{figure*}[!t]
     \centering
-    \includegraphics[width=\linewidth]{plots/abl_qwen2.5-3b_threshold_v5.pdf}
+    \includegraphics[width=\linewidth]{plots/abl_qwen2.5-3b_threshold_v6.pdf}
     \caption{
     Effect of varying $\tau$ using Qwen2.5-3B. Results for Llama3.2-3B are in Appendix Figure~\ref{fig:threshold_llama3.2-3b}.
     }
@@ -758,11 +760,17 @@ We analyze the impact of several design choices in RCS.
 % Self-Consistency fails when majority responses are misleading, whereas RCS$_\text{uni}$ correctly recovers the answer by leveraging informative minority samples. This highlights the robustness of RCS in aggregating diverse outputs under noisy sampling.
 \textbf{(1) Effect Of Embedding Models:} In Figure~\ref{fig:embed_llama3.2-3b}, we compare three sentence transformers of increasing capacity. 
 % : \texttt{all-MiniLM-L6-v2}, \texttt{all-mpnet-base-v2}, and \texttt{all-roberta-large-v1}. 
-Results show minimal variation across models. This stability is especially evident on Arithmetics, where answers are numeric. On Form.Log., we observe a slight drop with \texttt{all-roberta-large-v1}, particularly for the probability-based variant, suggesting that higher embedding capacity does not necessarily improve semantic alignment in this setting. \textbf{(2) Effect Of Correctness Threshold:} Figure~\ref{fig:threshold_qwen2.5-3b} reports performance on SciQ and GPQA under varying correctness thresholds. We focus on \textsc{RCS}$_{\text{uni}}$ and \textsc{RCS}$_{\text{prob}}$, which consistently achieve the best results as the ROUGE-F1 threshold increases from 0.1 to 0.5, particularly within the common range of 0.2--0.4. 
+Results show minimal variation across models. This stability is especially evident on Arithmetics, where answers are numeric. 
+On Form.Log., we observe a slight drop with \texttt{all-roberta-large-v1}, particularly for the probability-based variant, suggesting that higher embedding capacity does not necessarily improve semantic alignment in this setting. 
+\textbf{(2) Effect Of Correctness Threshold:} Figure~\ref{fig:threshold_qwen2.5-3b} reports performance on SciQ and GPQA under varying correctness thresholds with only the best-performing methods shown. 
+We focus on \textsc{RCS}$_{\text{uni}}$ and \textsc{RCS}$_{\text{prob}}$, which consistently achieve the best results as the ROUGE-F1 threshold increases from 0.1 to 0.5, particularly within the common range of 0.2--0.4. 
 % This demonstrates RCS's robustness to threshold selection. 
-\textbf{(3) Effect of Full-Trajectory Embeddings:}\label{sec:embedding-collapse} A natural extension of RCS is to use full generation trajectories instead of final-answer embeddings. However, this leads to an \textit{embedding collapse} effect, where candidates become less distinguishable due to shared prefixes and redundant reasoning.
-We compare this variant with final-answer embeddings (Appendix Figures~\ref{fig:full_qwen2.5-3b} and~\ref{fig:full_llama3.2-3b}) and observe consistent performance drops. This suggests that intermediate tokens introduce noise and weaken discriminative signals, while final answers provide a more compact and task-relevant representation. % These results support our design choice.
-This collapse issue also affects methods that operate on full trajectories: ModeX applies spectral clustering over complete reasoning traces, while SCW~\citep{jain2023sc} embeds full reasoning paths and groups pairwise cosine-similarity scores by unique trajectory. Although SCW's similarity-based aggregation provides an implicit outlier-down-weighting effect, shared prefixes still cause representations to collapse, and the discrete grouping-by-trajectory step can miss minority correct answers. RCS avoids both issues by restricting embeddings to the extracted final answer and ranking all candidates continuously via the weighted Fréchet mean.
+\textbf{(3) Effect of Full-Trajectory Embeddings:}\label{sec:embedding-collapse} A natural extension of RCS is to use full generation trajectories instead of final-answer embeddings. 
+However, this leads to an \textit{embedding collapse} effect, where candidates become less distinguishable due to shared prefixes and redundant reasoning.
+We compare this variant with final-answer embeddings (Appendix Figures~\ref{fig:full}) and observe consistent performance drops.
+This collapse issue also affects methods that operate on full trajectories, such as ModeX and SCW~\citep{jain2023sc}, which cluster or group complete reasoning traces based on embedding similarity. 
+This suggests that intermediate tokens introduce noise and weaken discriminative signals, while final answers provide a more compact and task-relevant representation. % These results support our design choice.
+% RCS avoids both issues by restricting embeddings to the extracted final answer and ranking all candidates continuously via the weighted Fréchet mean.
 
 % \paragraph{Effect Of Embedding Models.}
 
