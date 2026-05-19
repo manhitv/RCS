@@ -6,6 +6,7 @@
 
 <div align="center">
 
+[![arXiv](https://img.shields.io/badge/arXiv-2604.12196-b31b1b)](https://arxiv.org/pdf/2604.12196)
 [![Python](https://img.shields.io/badge/Python-3.10-blue)](https://www.python.org/)
 [![Transformers](https://img.shields.io/badge/Powered_by-Transformers-yellow)](https://github.com/huggingface/transformers)
 [![vLLM](https://img.shields.io/badge/Powered_by-vLLM-orange)](https://github.com/vllm-project/vllm)
