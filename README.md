@@ -1,8 +1,20 @@
-# RCS
+<div align="center">
+<img src="assets/rcs_logo.svg" height=140 alt="RCS">
+  <h1><b> RCS: Radial Consensus Score </b></h1>
+  <p><i>Efficient Best-of-N — pick the most consistent answer, not the luckiest one.</i></p>
+</div>
 
-Source code for the paper: **"Efficient Best-Of-N with Radial Consensus Score"** 
+<div align="center">
 
-- Preprint: Comming Soon
+[![Python](https://img.shields.io/badge/Python-3.10-blue)](https://www.python.org/)
+[![Transformers](https://img.shields.io/badge/Powered_by-Transformers-yellow)](https://github.com/huggingface/transformers)
+[![vLLM](https://img.shields.io/badge/Powered_by-vLLM-orange)](https://github.com/vllm-project/vllm)
+
+</div>
+
+Source code for the paper **"Efficient Best-Of-N with Radial Consensus Score"**.
+
+> 📜 **Preprint:** Coming soon.
 
 ---
 
