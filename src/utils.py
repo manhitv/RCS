@@ -26,6 +26,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from . import api_key
 import torch
 import torch.nn.functional as F
 
@@ -37,7 +38,7 @@ from vllm import SamplingParams
 import cohere
 from google import genai
 
-from . import config, api_key
+from . import config
 
 logging.basicConfig(level=logging.ERROR)
 
