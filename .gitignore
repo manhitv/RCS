@@ -4,8 +4,4 @@ log_error/
 log_output/
 bashfiles/
 results/
-local/
-api_key.py
-src/api_key.py
-MAD/
 paper/

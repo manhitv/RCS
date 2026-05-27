@@ -33,8 +33,18 @@ center (uniform, frequency-, probability-, or cosine-similarity-weighted, or a r
 medoid), and pick the closest sample. RCS recovers majority vote on discrete tasks and
 stays well-defined on free-form generation.
 
-📜 **Paper:** *Efficient Best-of-N with Radial Consensus Score* (preprint coming soon).
+📜 **Paper:** [*Efficient Best-of-N with Radial Consensus Score*](https://arxiv.org/pdf/2604.12196).
 
+> If you find this repository helpful for your work, please consider citing as follows:
+>
+> ```LaTeX
+> @article{nguyen2026beyond,
+>  title={Beyond Majority Voting: Efficient Best-Of-N with Radial Consensus Score},
+>  author={Nguyen, Manh and Gupta, Sunil and Le, Hung},
+>  journal={arXiv preprint arXiv:2604.12196},
+>  year={2026}
+> }
+> ```
 ---
 
 ## <a name="install"></a> 🚀 Installation
